@@ -321,6 +321,85 @@ def test_device_time_zone_defaults_to_the_server_time_zone(
     assert detail_response.json()["data"]["timeZoneId"] == expected
 
 
+@pytest.mark.parametrize(("stored_active_time", "expected"), [(1763700000, 1763700000), (None, 0)])
+def test_device_active_time_is_stable_across_requests_and_restarts(
+    tmp_path: Path,
+    stored_active_time: int | None,
+    expected: int,
+) -> None:
+    config_file = write_release_config(tmp_path)
+    config = load_config(config_file)
+    paths = resolve_paths(config_file, config)
+
+    duid = "6HL2zfniaoYYV01CkVuhkO"
+    device: dict[str, object] = {
+        "duid": duid,
+        "name": "Roborock Qrevo MaxV",
+        "model": "roborock.vacuum.a87",
+        "product_id": "5gUei3OIJIXVD3eD85Balg",
+        "local_key": "xPd5Dr8CGGqtdDlH",
+    }
+    if stored_active_time is not None:
+        device["activeTime"] = stored_active_time
+
+    paths.runtime_dir.mkdir(parents=True, exist_ok=True)
+    paths.state_dir.mkdir(parents=True, exist_ok=True)
+    paths.inventory_path.write_text(
+        json.dumps({"home": {"id": 1316433, "name": "My Home"}, "devices": [device]}) + "\n",
+        encoding="utf-8",
+    )
+    _seed_cloud_snapshot(paths.cloud_snapshot_path, {"id": 1316433, "name": "My Home"})
+    paths.runtime_credentials_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "devices": [
+                    {
+                        "did": "1103821560705",
+                        "duid": duid,
+                        "name": "Roborock Qrevo MaxV",
+                        "model": "roborock.vacuum.a87",
+                        "product_id": "5gUei3OIJIXVD3eD85Balg",
+                        "localkey": "xPd5Dr8CGGqtdDlH",
+                        "local_key_source": "inventory_cloud",
+                        "device_mqtt_usr": "c25b14ceac358d2a",
+                        "updated_at": "2026-03-17T22:50:00+00:00",
+                        "last_nc_at": "",
+                        "last_mqtt_seen_at": "",
+                    }
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    user = ProtocolAuthStore(paths.cloud_snapshot_path).availability().user
+    assert user is not None
+
+    def get(client: TestClient, path: str, nonce: str) -> dict[str, object]:
+        headers = {"Authorization": build_hawk_authorization(user=user, path=path, nonce=nonce)}
+        response = client.get(path, headers=headers)
+        assert response.status_code == 200
+        return response.json()
+
+    home_path = "/v3/user/homes/1316433"
+    detail_path = f"/user/devices/{duid}"
+    served: list[int] = []
+    # A new supervisor on the same files stands for a server restart.
+    for start in range(2):
+        supervisor = ReleaseSupervisor(config=config, paths=paths)
+        supervisor.refresh_inventory_state()
+        client = TestClient(supervisor.app)
+        for request in range(2):
+            nonce = f"nonce-{start}-{request}"
+            served.extend(item["activeTime"] for item in get(client, home_path, f"{nonce}-home")["result"]["devices"])
+            served.append(get(client, detail_path, f"{nonce}-detail")["data"]["activeTime"])
+
+    # The device plugin caches activeTime and opens its privacy dialog when the value changes.
+    assert served == [expected] * 8
+
+
 def test_device_detail_uses_runtime_connection_and_preserves_inventory_fields(tmp_path: Path) -> None:
     config_file = write_release_config(tmp_path)
     config = load_config(config_file)

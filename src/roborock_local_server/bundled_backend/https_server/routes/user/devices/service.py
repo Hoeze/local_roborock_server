@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import time
 from typing import Any, Sequence
 
 from roborock_local_server.inventory import _extract_inventory_vacuums
@@ -239,7 +238,6 @@ def _normalize_devices(
     ctx: ServerContext,
     devices_raw: list[dict[str, Any]],
     *,
-    now_ts: int,
     default_name_prefix: str = "Vacuum",
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     products_by_id: dict[str, dict[str, Any]] = {}
@@ -272,7 +270,9 @@ def _normalize_devices(
             "productId": product_id,
             "fv": str(get_value(raw_item, "fv", "firmware", "firmware_version", default="02.33.88")),
             "pv": str(get_value(raw_item, "pv", "protocol_version", default="1.0")),
-            "activeTime": as_int(get_value(raw_item, "active_time", "activeTime", default=now_ts), now_ts),
+            # The device plugin compares activeTime with its cached value, so it
+            # must not change between requests. 0 marks an unknown bind time.
+            "activeTime": as_int(get_value(raw_item, "active_time", "activeTime", default=0), 0),
             "timeZoneId": timezone,
             "online": as_bool(get_value(raw_item, "online", default=True), True),
             "sn": str(
@@ -474,14 +474,12 @@ def _home_data(ctx: ServerContext) -> dict[str, Any]:
     home_value = inventory.get("home")
     home = dict(home_value) if isinstance(home_value, dict) else {}
     cloud_home_data = _load_cloud_home_data(ctx) or {}
-    now_ts = int(time.time())
 
     raw_devices = inventory.get("devices")
     devices_source = raw_devices if isinstance(raw_devices, list) and raw_devices else [{}]
     devices, products = _normalize_devices(
         ctx,
         devices_source,
-        now_ts=now_ts,
     )
 
     raw_received = get_value(inventory, "received_devices", "receivedDevices", default=[])
@@ -489,7 +487,6 @@ def _home_data(ctx: ServerContext) -> dict[str, Any]:
     received_devices, received_products = _normalize_devices(
         ctx,
         received_source,
-        now_ts=now_ts,
         default_name_prefix="Shared Vacuum",
     )
     for product in received_products:

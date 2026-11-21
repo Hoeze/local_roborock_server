@@ -14,6 +14,7 @@ import secrets
 import signal
 import socket
 import threading
+import time
 from typing import Any
 from urllib.parse import parse_qs
 
@@ -1768,6 +1769,9 @@ class ReleaseSupervisor:
                     "local_key": local_key,
                     "source": "onboarding",
                     "schema": resolved_schema,
+                    # The bind time. The cloud sends it unchanged, and the device
+                    # plugin compares it with its cached value.
+                    "activeTime": int(time.time()),
                 }
             )
             inventory["devices"] = devices

@@ -1,4 +1,5 @@
 import json
+import time
 from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -747,6 +748,7 @@ def test_new_vacuum_blind_session_autopersists_to_inventory(tmp_path: Path) -> N
     assert session["target"]["did"] == ""
 
     client = TestClient(supervisor.app)
+    before_ts = int(time.time())
     # The vacuum presents its own did and walks the supported (v1) bootstrap: /region then /nc.
     assert client.get("/region?did=1103835404427&pid=roborock.vacuum.a117").status_code == 200
     assert client.get("/nc?did=1103835404427&pid=roborock.vacuum.a117").status_code == 200
@@ -774,10 +776,14 @@ def test_new_vacuum_blind_session_autopersists_to_inventory(tmp_path: Path) -> N
     assert record is not None
     assert persisted["local_key"] == record["localkey"]
 
+    # The bind time is stored once, like the cloud's activeTime.
+    assert before_ts <= persisted["activeTime"] <= int(time.time())
+
     # Idempotent: polling again must not add a duplicate inventory entry.
     supervisor.onboarding_session_snapshot(session_id=session_id)
     inventory_again = json.loads(paths.inventory_path.read_text(encoding="utf-8"))
     assert len(inventory_again["devices"]) == 1
+    assert inventory_again["devices"][0]["activeTime"] == persisted["activeTime"]
 
 
 def test_new_vacuum_persists_at_nc_without_session_polling(tmp_path: Path) -> None:
