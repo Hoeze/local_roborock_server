@@ -11,6 +11,8 @@ import aiohttp
 from fastapi.responses import Response
 
 from shared.context import ServerContext
+from shared.data_helpers import cloud_region_from_base_url, known_cloud_region
+from shared.device_plugin_catalog import FALLBACK_REGION, DevicePluginCatalog, catalog_for_region
 from ..auth.service import load_cloud_full_snapshot
 
 PLUGIN_PROXY_ALLOWED_HOSTS = {
@@ -82,29 +84,9 @@ CATEGORY_PLUGIN_LIST = [
     },
 ]
 
-APPPLUGIN_LIST = [
-    {
-        "version": 6058,
-        "url": "https://files.roborock.com/iot/plugin/ea53983b82e948638904d9154bb7f474.zip",
-        "pluginLevel": 3001,
-        "productid": 110,
-        "apilevel": 10028,
-    },
-    {
-        "version": 5208,
-        "url": "https://cdn.awsusor0.fds.api.mi-img.com/resources/iot/plugin/7cf4eb4c705c420483741189be389927.zip",
-        "pluginLevel": 3001,
-        "productid": 23,
-        "apilevel": 10028,
-    },
-    {
-        "version": 90,
-        "url": "https://rrpkg-us.roborock.com/iot/plugin/019b4e083fbe7f81a28d79756be6f0ed.zip",
-        "pluginLevel": 3001,
-        "productid": 10001,
-        "apilevel": 10028,
-    },
-]
+# Android device plugin records of the EU catalog. /api/v1/appplugin answers
+# all of them to a request without product ids.
+APPPLUGIN_LIST = catalog_for_region(FALLBACK_REGION).appplugin_records
 
 
 def plugin_proxy_url(ctx: ServerContext, source_url: str) -> str:
@@ -132,6 +114,33 @@ def proxied_plugin_records(
             item[url_key] = plugin_proxy_url(ctx, source_url)
         proxied.append(item)
     return proxied
+
+
+def _dict_value(data: Any, key: str) -> dict[str, Any]:
+    value = data.get(key) if isinstance(data, dict) else None
+    return value if isinstance(value, dict) else {}
+
+
+def server_cloud_region(ctx: ServerContext) -> str:
+    """Return the cloud region of the account's cloud import, else the configured region."""
+    # The import's product ids come from the cloud of its region. Without an
+    # import, or if its region is unknown, network.region of the config decides.
+    snapshot = load_cloud_full_snapshot(ctx)
+    if snapshot is not None:
+        user_data = _dict_value(snapshot, "user_data")
+        region = (
+            cloud_region_from_base_url(_dict_value(snapshot, "meta").get("base_url"))
+            or known_cloud_region(user_data.get("region"))
+            or known_cloud_region(_dict_value(_dict_value(user_data, "rriot"), "r").get("r"))
+        )
+        if region:
+            return region
+    return ctx.region
+
+
+def built_in_catalog(ctx: ServerContext) -> DevicePluginCatalog:
+    """Return the built-in plugin catalog for the cloud region of this server."""
+    return catalog_for_region(server_cloud_region(ctx))
 
 
 def _snapshot_plugin_catalogs(ctx: ServerContext) -> dict[str, Any]:

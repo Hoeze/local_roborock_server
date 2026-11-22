@@ -128,12 +128,6 @@ DEFAULT_PRODUCT_SCHEMA: list[dict[str, Any]] = [
     },
 ]
 
-MODEL_PRODUCT_ID_OVERRIDES = {
-    "roborock.vacuum.a87": 110,
-    "roborock.vacuum.a15": 23,
-    "roborock.vacuum.sc05": 10001,
-}
-
 # The login and user answers name a country and its dialing code. "EU" is no
 # country, so the EU cloud answers "DE", which fits the dialing code 49.
 REGION_COUNTRY = {

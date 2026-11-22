@@ -7,7 +7,7 @@ import re
 import time
 from typing import Any, Callable, Sequence
 
-from shared.constants import DEFAULT_HOME_NAME, DEFAULT_PRODUCT_SCHEMA, MODEL_PRODUCT_ID_OVERRIDES
+from shared.constants import DEFAULT_HOME_NAME, DEFAULT_PRODUCT_SCHEMA
 from shared.context import ServerContext
 from shared.data_helpers import (
     as_bool,
@@ -16,8 +16,9 @@ from shared.data_helpers import (
     default_product_name,
     default_timezone,
     get_value,
-    stable_int,
+    model_product_ids,
 )
+from shared.device_plugin_catalog import product_fields, resolve_product_ids
 from shared.http_helpers import wrap_response
 from shared.inventory_io import WEB_API_INVENTORY_FILE, load_inventory, write_inventory
 
@@ -101,6 +102,7 @@ from .routes.api.v1.user import match_get_url_by_email as _match_get_url_by_emai
 from .routes.api.v1.user import match_logout as _match_logout_v1
 from .routes.api.v1.user import match_user_info as _match_user_info_v1
 from .routes.api.v1.user import match_user_roles as _match_user_roles_v1
+from .routes.plugin.common import built_in_catalog, snapshot_plugin_catalog_data
 from .routes.user.app.info import build as _build_post_app_info
 from .routes.user.app.info import match as _match_post_app_info
 from .routes.user.inbox.latest import build as _build_get_inbox_latest
@@ -516,12 +518,12 @@ def _build_product_response(ctx: ServerContext, home_data: dict[str, Any]) -> di
     filtered_home_data = _filter_home_data_to_runtime_devices(ctx, home_data)
     products_value = filtered_home_data.get("products")
     products = products_value if isinstance(products_value, list) else []
+    products = [product for product in products if isinstance(product, dict)]
+    cloud_product_ids = model_product_ids(snapshot_plugin_catalog_data(ctx, "product"))
+    product_ids = resolve_product_ids(products, cloud_product_ids, built_in_catalog(ctx))
     categories: dict[str, dict[str, Any]] = {}
-    for product in products:
-        if not isinstance(product, dict):
-            continue
-        raw_product_id = str(product.get("id") or "")
-        category_name = str(product.get("category") or "robot.vacuum.cleaner")
+    for product, product_id in zip(products, product_ids):
+        model, _, category_name = product_fields(product)
         if category_name not in categories:
             category_id = len(categories) + 1
             categories[category_name] = {
@@ -532,12 +534,6 @@ def _build_product_response(ctx: ServerContext, home_data: dict[str, Any]) -> di
                 },
                 "productList": [],
             }
-        model = str(product.get("model") or "roborock.vacuum.a117")
-        model_key = model.strip().lower()
-        product_id = MODEL_PRODUCT_ID_OVERRIDES.get(
-            model_key,
-            as_int(raw_product_id, stable_int(raw_product_id or category_name) % 1_000_000),
-        )
         product_entry = {
             "id": product_id,
             "name": str(product.get("name") or default_product_name(model)),
